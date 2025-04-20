@@ -33,10 +33,30 @@ def synthesize_grasp(env: grasp_synthesis.AllegroHandEnv,
     """
     #YOUR CODE HERE
 
+    # Initialize the hand configuration and other parameters
+    q_h = q_h_init
+    iter_count = 0
+    in_contact = False
+    while iter_count < max_iters: # Start optimization loop
+        iter_count += 1
+        in_contact = env.all_fingers_touching(env, fingertip_names) # Check if all fingers are touching the object
+        f = joint_space_objective(env, q_h, fingertip_names, in_contact)  # Compute objective function based on current q_h
+        q_h_new = q_h - lr * numeric_gradient(f, q_h, env, fingertip_names, in_contact)  # Compute the gradient and update q_h
+        
+        in_contact = env.all_fingers_touching(env, fingertip_names)
+
+        improvement = f - joint_space_objective(env, q_h_new, fingertip_names, in_contact)
+        if improvement > 0:
+            q_h = q_h_new
+            if improvement < 1e-6:
+                break
+    return q_h
+
 def joint_space_objective(env: grasp_synthesis.AllegroHandEnv, 
                           q_h: np.array,
                           fingertip_names: list[str], 
                           in_contact: bool, 
+                          Q_plus_thresh,
                           beta=10.0, 
                           friction_coeff=0.5, 
                           num_friction_cone_approx=4):
@@ -55,14 +75,26 @@ def joint_space_objective(env: grasp_synthesis.AllegroHandEnv,
     friction_coeff: Friction coefficient for the ball
     num_friction_cone_approx: number of approximation vectors in the friction cone
 
-    
     Output
     ------
     fc_loss + (beta * d) as written in algorithm 2
     """
     env.set_configuration(q_h)
     #YOUR CODE HERE
+    positions = env.get_contact_positions(fingertip_names)
+    ball_radius = 0.05
+    ball_center = env.physics.data.xpos["ball"]
+    D = env.sphere_surface_distance(positions, ball_center, ball_radius)
 
+    if not in_contact: return beta * D
+    else: # in contact
+        normals = env.get_contact_normals(env.physics.data.contact)
+        FC = build_friction_cones(normals) # Step 4: Build friction cones
+        G = build_grasp_matrix(positions, FC) # Step 5: Build grasp map (G)
+        fc_loss = optimize_necessary_condition(G, env) # Step 6: Minimize the necessary condition for force closure
+        if fc_loss < Q_plus_thresh:
+            fc_loss = optimize_sufficient_condition(G)
+        return fc_loss + beta * D
 
 def numeric_gradient(function: types.FunctionType, 
                      q_h: np.array, 
@@ -96,7 +128,7 @@ def numeric_gradient(function: types.FunctionType,
     return grad
 
 
-def build_friction_cones(normal: np.array, mu=0.5, num_approx=4):
+def build_friction_cones(normals: np.array, mu=0.5, num_approx=4):
     """
     This function builds a discrete friction cone around each normal vector. 
 
@@ -113,6 +145,23 @@ def build_friction_cones(normal: np.array, mu=0.5, num_approx=4):
     as vectors
     """
     #YOUR CODE HERE
+    friction_cones = []
+    for n in normals:
+        friction_cone_vectors = []
+        angle = np.arctan(mu)
+        for i in range(num_approx):
+            theta = i * 2 * np.pi / num_approx  # Evenly distributed in azimuthal angle
+            # Use spherical coordinates to sample the friction cone
+            x = np.cos(theta) * np.sin(angle)
+            y = np.sin(theta) * np.sin(angle)
+            z = np.cos(angle)
+
+            rotation_matrix 
+            vector = rotation_matrix @ np.array([x, y, z])
+            friction_cone_vectors.append(vector)
+        friction_cones.append(friction_cone_vectors)
+    
+    return np.array(friction_cone_vectors)
 
 
 def build_grasp_matrix(positions: np.array, friction_cones: list, origin=np.zeros(3)):
@@ -128,6 +177,21 @@ def build_grasp_matrix(positions: np.array, friction_cones: list, origin=np.zero
     Return a 2D numpy array G with shape (6, sum_of_all_cone_directions).
     """
     #YOUR CODE HERE
+    alpha = 1 # might need to change later
+    G = []
+
+    for i, fc in enumerate (friction_cones): # extract first cone
+        di = np.zeros ((3, 1))
+
+        for dij in fc: 
+            di += alpha * dij
+
+        contact_pos = (positions[i] - origin) 
+        torque = np.cross(contact_pos, di)
+        wrench = np.concatenate((di, torque), axis=0)
+        G.append(wrench)
+    return np.array(G)
+
 
 
 def optimize_necessary_condition(G: np.array, env: grasp_synthesis.AllegroHandEnv):

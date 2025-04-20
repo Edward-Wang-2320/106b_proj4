@@ -1,5 +1,7 @@
 import numpy as np
 import dm_control
+from dm_control import mjcf
+from scipy.spatial.transform import Rotation as R 
 
 def clip_to_valid_state(physics: dm_control.mjcf.physics.Physics, qpos: np.array):
     """
@@ -41,3 +43,20 @@ def quat_multiply(q1: np.array, q2: np.array):
 def quat_conjugate(q: np.array):
     """Return quaternion conjugate: [w, -x, -y, -z]."""
     return np.array([q[0], -q[1], -q[2], -q[3]])
+
+def vector_to_quaternion(normal_vector):
+
+    reference_vector = np.array([0, 0, 1]) # Step 1: Define the reference vector (usually the z-axis)
+    axis_of_rotation = np.cross(reference_vector, normal_vector) # Step 2: Compute the axis of rotation (cross product)
+
+    # Step 3: Compute the angle of rotation (dot product and arccos)
+    cos_theta = np.dot(reference_vector, normal_vector)
+    angle = np.arccos(cos_theta)
+
+    axis_of_rotation = axis_of_rotation / np.linalg.norm(axis_of_rotation) # Step 4: Normalize the axis of rotation (to ensure it's a unit vector)
+
+    # Step 5: Create the quaternion using scipy.spatial.transform
+    rotation = R.from_rotvec(axis_of_rotation * angle)  # axis * angle
+    quaternion = rotation.as_quat()  # Quaternion [x, y, z, w]
+    
+    return quaternion
